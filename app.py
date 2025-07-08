@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import requests
 import io
+import time
 from werkzeug.datastructures import FileStorage
 
 app = Flask(__name__)
@@ -9,41 +10,48 @@ app = Flask(__name__)
 def home():
     return '✅ ClickScan Flask Middleware is running!'
 
-@app.route('/ocr', methods=['POST'])
-def ocr():
+@app.route('/ocr/<endpoint>', methods=['POST'])
+def ocr_proxy(endpoint):
+    start = time.time()
+    print(f"📥 OCR request received for endpoint: {endpoint}")
+
     if not request.data:
         return jsonify({'error': 'No file content received'}), 400
 
-    # Reconstruct a fake file from the raw binary stream
     file = FileStorage(
         stream=io.BytesIO(request.data),
         filename="uploaded.pdf",
         content_type="application/pdf"
     )
 
-    # Prepare the multipart/form-data payload
     files = {
         'file': (file.filename, file.stream, file.content_type)
     }
 
     try:
-        # Forward the file to ClickScan OCR API
+        # Construct full ClickScan API URL
+        target_url = f'https://clickscan.terralogic.com/ocr/{endpoint}/'
+
         response = requests.post(
-            'https://clickscan.terralogic.com/ocr/gettext/',
+            target_url,
             files=files,
             headers={'Accept': 'application/json'}
         )
 
-        # Return the OCR response
+        elapsed = time.time() - start
+        print(f"✅ Forwarded to ClickScan in {elapsed:.2f} seconds")
+
         if response.status_code == 200:
             return jsonify(response.json())
         else:
             return jsonify({
-                'error': 'ClickScan OCR failed',
+                'error': f'ClickScan OCR failed for endpoint {endpoint}',
                 'detail': response.text
             }), response.status_code
 
     except Exception as e:
+        elapsed = time.time() - start
+        print(f"❌ Exception: {str(e)} after {elapsed:.2f} seconds")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
