@@ -8,9 +8,8 @@ from werkzeug.datastructures import FileStorage
 
 app = Flask(__name__)
 
-# 🧾 Extract invoice number using multiple patterns
 def extract_invoice_number(text):
-    match = re.search(r'(Invoice|Inv|Bill)[\s]*(Number|No)[\s:\-]*([A-Z0-9\-\/]+)', text, re.IGNORECASE)
+    match = re.search(r'(Invoice|Inv|Bill)[\s\-]*(Number|No)?[:\s\-]*([A-Z0-9\-\/]+)', text, re.IGNORECASE)
     return match.group(3) if match else None
 
 @app.route('/')
@@ -36,7 +35,7 @@ def ocr_proxy(endpoint):
     }
 
     try:
-        # 🔗 Call structured invoice OCR API
+        # 🔗 Main structured ClickScan API call
         target_url = f'https://clickscanstg.terralogic.com/ocr/{endpoint}/'
         response = requests.post(
             target_url,
@@ -51,21 +50,25 @@ def ocr_proxy(endpoint):
             return Response(response.content, status=response.status_code, content_type='application/json')
 
         result = response.json()
-        raw_text = result.get("content", "")
         parsed_data = result.get("parsedData", {})
+        raw_text = result.get("content", "")
 
-        # 🔁 Fallback to /ocr/gettext if content is empty
+        # 🔁 Fallback: Fetch content from /ocr/gettext/ if missing
         if not raw_text:
             print("🔁 Fetching content from /ocr/gettext/ as fallback")
-            content_response = requests.post(
-                'https://clickscanstg.terralogic.com/ocr/gettext/',
-                files=files,
-                headers={'Accept': 'application/json'}
-            )
-            if content_response.status_code == 200:
-                raw_text = content_response.text.strip('"')
-            else:
-                print("⚠️ Failed to fetch fallback content")
+            try:
+                fallback_response = requests.post(
+                    'https://clickscanstg.terralogic.com/ocr/gettext/',
+                    files=files,
+                    headers={'Accept': 'application/json'}
+                )
+                if fallback_response.status_code == 200:
+                    raw_text = fallback_response.text.strip('"')
+                    print(f"✅ Fallback content fetched. Preview: {raw_text[:100]}...")
+                else:
+                    print("⚠️ Fallback GETTEXT failed: " + fallback_response.text)
+            except Exception as fe:
+                print(f"⚠️ Failed to fetch fallback content: {fe}")
 
         if raw_text:
             invoice_number = extract_invoice_number(raw_text)
