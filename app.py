@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, Response
 import requests
 import io
 import time
@@ -16,7 +16,7 @@ def ocr_proxy(endpoint):
     print(f"📥 OCR request received for endpoint: {endpoint}")
 
     if not request.data:
-        return jsonify({'error': 'No file content received'}), 400
+        return Response('{"error": "No file content received"}', status=400, mimetype='application/json')
 
     file = FileStorage(
         stream=io.BytesIO(request.data),
@@ -29,9 +29,8 @@ def ocr_proxy(endpoint):
     }
 
     try:
-        # Construct full ClickScan API URL
-        target_url = f'https://clickscan.terralogic.com/ocr/{endpoint}/'
-
+        # 🔗 Construct full ClickScan API URL
+        target_url = f'https://clickscanstg.terralogic.com/ocr/{endpoint}/'
         response = requests.post(
             target_url,
             files=files,
@@ -41,18 +40,15 @@ def ocr_proxy(endpoint):
         elapsed = time.time() - start
         print(f"✅ Forwarded to ClickScan in {elapsed:.2f} seconds")
 
-        if response.status_code == 200:
-            return jsonify(response.json())
-        else:
-            return jsonify({
-                'error': f'ClickScan OCR failed for endpoint {endpoint}',
-                'detail': response.text
-            }), response.status_code
+        return Response(response.content, status=response.status_code, content_type=response.headers.get('Content-Type'))
 
     except Exception as e:
         elapsed = time.time() - start
-        print(f"❌ Exception: {str(e)} after {elapsed:.2f} seconds")
-        return jsonify({'error': str(e)}), 500
+        print(f"❌ Exception occurred: {e} after {elapsed:.2f} seconds")
+        return Response(f'{{"error": "{str(e)}"}}', status=500, mimetype='application/json')
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    import os
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
+
