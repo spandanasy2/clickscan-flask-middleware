@@ -1,4 +1,4 @@
-from flask import Flask, request, Response
+from flask import Flask, request, jsonify
 import requests
 import io
 import time
@@ -10,13 +10,13 @@ app = Flask(__name__)
 def home():
     return '✅ ClickScan Flask Middleware is running!'
 
-@app.route('/ocr/<endpoint>', methods=['POST'])
-def ocr_proxy(endpoint):
+@app.route('/ocr/invoice', methods=['POST'])
+def ocr_invoice():
     start = time.time()
-    print(f"📥 OCR request received for endpoint: {endpoint}")
+    print("📥 OCR Invoice request received")
 
     if not request.data:
-        return Response('{"error": "No file content received"}', status=400, mimetype='application/json')
+        return jsonify({'error': 'No file content received'}), 400
 
     file = FileStorage(
         stream=io.BytesIO(request.data),
@@ -29,8 +29,8 @@ def ocr_proxy(endpoint):
     }
 
     try:
-        # 🔗 Construct full ClickScan API URL
-        target_url = f'https://clickscanstg.terralogic.com/ocr/{endpoint}/'
+        # 🔗 Call the ClickScan structured invoice API
+        target_url = 'https://clickscanstg.terralogic.com/ocr/invoice/'
         response = requests.post(
             target_url,
             files=files,
@@ -38,17 +38,37 @@ def ocr_proxy(endpoint):
         )
 
         elapsed = time.time() - start
-        print(f"✅ Forwarded to ClickScan in {elapsed:.2f} seconds")
+        print(f"✅ OCR Invoice processed in {elapsed:.2f} seconds")
 
-        return Response(response.content, status=response.status_code, content_type=response.headers.get('Content-Type'))
+        if response.status_code == 200:
+            raw = response.json()
+
+            # 🧠 Extract fields from response (with defaults if missing)
+            structured_data = {
+                'merchant_name': raw.get('merchant_name', ''),
+                'invoice_date': raw.get('date', ''),
+                'invoice_time': raw.get('time', ''),
+                'total_amount': raw.get('total_amount', ''),
+                'currency_code': raw.get('currency', ''),
+                'description': raw.get('description', ''),
+                'invoice_number': raw.get('invoice_number', '')
+            }
+
+            return jsonify({
+                'document_type': 'Invoice',
+                'parsedData': structured_data
+            })
+        else:
+            return jsonify({
+                'error': 'ClickScan OCR failed',
+                'status_code': response.status_code,
+                'detail': response.text
+            }), response.status_code
 
     except Exception as e:
         elapsed = time.time() - start
         print(f"❌ Exception occurred: {e} after {elapsed:.2f} seconds")
-        return Response(f'{{"error": "{str(e)}"}}', status=500, mimetype='application/json')
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    import os
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
-
+    app.run(debug=True, host='0.0.0.0', port=10000)
