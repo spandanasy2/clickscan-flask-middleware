@@ -2,9 +2,26 @@ from flask import Flask, request, Response
 import requests
 import io
 import time
+import re
+import json
 from werkzeug.datastructures import FileStorage
 
 app = Flask(__name__)
+
+def extract_sow_fields(raw_text):
+    def extract(pattern):
+        match = re.search(pattern, raw_text, re.IGNORECASE)
+        return match.group(1).strip() if match else None
+
+    return {
+        "project_title": extract(r"Project Title:\s*(.+)"),
+        "client": extract(r"Client:\s*(.+)"),
+        "service_provider": extract(r"Service Provider:\s*(.+)"),
+        "prepared_date": extract(r"Prepared Date:\s*(.+)"),
+        "start_date": extract(r"Project Kickoff[:\s]*([A-Za-z0-9 ,]+)"),
+        "end_date": extract(r"(Go[\s\-]?Live Date)[:\s]*([A-Za-z0-9 ,]+)"),
+        "total_fee": extract(r"Total Project Fee[:\s₹]*([0-9,]+)")
+    }
 
 @app.route('/')
 def home():
@@ -18,7 +35,7 @@ def ocr_proxy(endpoint):
     if not request.data:
         return Response('{"error": "No file content received"}', status=400, mimetype='application/json')
 
-    # Detect content type from headers
+    # Detect content type
     content_type = request.headers.get('Content-Type', '').lower()
     if 'image/png' in content_type:
         file_type = 'image/png'
@@ -30,7 +47,6 @@ def ocr_proxy(endpoint):
         file_type = 'application/pdf'
         filename = 'uploaded.pdf'
 
-    # Wrap the incoming binary into a FileStorage object
     file = FileStorage(
         stream=io.BytesIO(request.data),
         filename=filename,
@@ -42,18 +58,35 @@ def ocr_proxy(endpoint):
     }
 
     try:
-        # Construct full ClickScan API URL
-        target_url = f'https://clickscanstg.terralogic.com/ocr/{endpoint}/'
-        response = requests.post(
-            target_url,
-            files=files,
-            headers={'Accept': 'application/json'}
-        )
+        if endpoint == 'sow':
+            # Forward to /ocr/gettext
+            print("🔁 Forwarding to /ocr/gettext for SOW parsing...")
+            response = requests.post(
+                'https://clickscanstg.terralogic.com/ocr/gettext/',
+                files=files,
+                headers={'Accept': 'application/json'}
+            )
+            if response.status_code != 200:
+                return Response(response.content, status=response.status_code, mimetype='application/json')
 
-        elapsed = time.time() - start
-        print(f"✅ Forwarded to ClickScan in {elapsed:.2f} seconds")
+            # Parse the raw text
+            raw_text = response.text.strip('"')
+            sow_data = extract_sow_fields(raw_text)
+            print("✅ Extracted SOW fields:", sow_data)
+            return Response(json.dumps({"document_type": "SOW", "parsedData": sow_data, "content": raw_text}),
+                            status=200, mimetype='application/json')
 
-        return Response(response.content, status=response.status_code, content_type=response.headers.get('Content-Type'))
+        else:
+            # Forward to original endpoint
+            target_url = f'https://clickscanstg.terralogic.com/ocr/{endpoint}/'
+            response = requests.post(
+                target_url,
+                files=files,
+                headers={'Accept': 'application/json'}
+            )
+            elapsed = time.time() - start
+            print(f"✅ Forwarded to ClickScan in {elapsed:.2f} seconds")
+            return Response(response.content, status=response.status_code, content_type=response.headers.get('Content-Type'))
 
     except Exception as e:
         elapsed = time.time() - start
