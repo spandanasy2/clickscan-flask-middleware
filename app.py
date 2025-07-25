@@ -2,7 +2,7 @@ from flask import Flask, request, Response
 import requests
 import io
 import time
-from werkzeug.datastructures import FileStorage
+from requests_toolbelt.multipart.encoder import MultipartEncoder
 
 app = Flask(__name__)
 
@@ -18,7 +18,7 @@ def ocr_proxy(endpoint):
     if not request.data:
         return Response('{"error": "No file content received"}', status=400, mimetype='application/json')
 
-    # Detect content type from headers
+    # Detect content type
     content_type = request.headers.get('Content-Type', '').lower()
     if 'image/png' in content_type:
         file_type = 'image/png'
@@ -30,28 +30,26 @@ def ocr_proxy(endpoint):
         file_type = 'application/pdf'
         filename = 'uploaded.pdf'
 
-    # Wrap the incoming binary into a FileStorage object
-    file = FileStorage(
-        stream=io.BytesIO(request.data),
-        filename=filename,
-        content_type=file_type
-    )
-
-    files = {
-        'file': (file.filename, file.stream, file.content_type)
-    }
-
     try:
-        # Construct full ClickScan API URL
+        # Build a multipart/form-data body using requests_toolbelt
+        multipart_data = MultipartEncoder(
+            fields={
+                'file': (filename, request.data, file_type)
+            }
+        )
+
         target_url = f'https://clickscanstg.terralogic.com/ocr/{endpoint}/'
         response = requests.post(
             target_url,
-            files=files,
-            headers={'Accept': 'application/json'}
+            data=multipart_data,
+            headers={
+                'Content-Type': multipart_data.content_type,
+                'Accept': 'application/json'
+            }
         )
 
         elapsed = time.time() - start
-        print(f"Forwarded to ClickScan in {elapsed:.2f} seconds")
+        print(f"✅ Forwarded to ClickScan in {elapsed:.2f} seconds")
 
         return Response(response.content, status=response.status_code, content_type=response.headers.get('Content-Type'))
 
