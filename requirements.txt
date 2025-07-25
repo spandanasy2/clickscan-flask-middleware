@@ -1,5 +1,4 @@
-flask
+fastapi
+uvicorn
 requests
 requests-toolbelt
-gunicorn
-flask-cors
